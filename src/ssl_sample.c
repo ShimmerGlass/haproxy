@@ -134,6 +134,54 @@ out:
 	return ret;
 }
 
+/* binary, returns a certificate in a binary chunk (der/raw).
+ */
+static int
+smp_fetch_ssl_x_chain_der(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	X509 *crt = NULL;
+	STACK_OF(X509)* certs = NULL;
+	int ret = 0;
+	struct buffer *smp_trash;
+	struct connection *conn;
+	SSL *ssl;
+
+	if (kw[4] != 'c') {
+		// only peer cert chain is supported
+		return -1;
+	}
+
+	conn = objt_conn(smp->sess->origin);
+	ssl = ssl_sock_get_ssl_object(conn);
+	if (!ssl)
+		return 0;
+
+	if (conn->flags & CO_FL_WAIT_XPRT) {
+		smp->flags |= SMP_F_MAY_CHANGE;
+		return 0;
+	}
+
+	certs = SSL_get_peer_cert_chain(ssl);
+	if (!certs)
+		goto out;
+
+	smp_trash = get_trash_chunk();
+	for (size_t i = 0; i < sk_X509_num(certs); i++)
+	{
+		crt = sk_X509_value(certs, i);
+		if (ssl_sock_crt2der(crt, smp_trash) <= 0)
+			goto out;
+	}
+
+	smp->data.u.str = *smp_trash;
+	smp->data.type = SMP_T_BIN;
+	ret = 1;
+
+out:
+	sk_X509_pop_free(certs);
+	return ret;
+}
+
 /* binary, returns serial of certificate in a binary chunk.
  * The 5th keyword char is used to know if SSL_get_certificate or SSL_get_peer_certificate
  * should be use.
@@ -1286,6 +1334,7 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	{ "ssl_c_ca_err",           smp_fetch_ssl_c_ca_err,       0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
 	{ "ssl_c_ca_err_depth",     smp_fetch_ssl_c_ca_err_depth, 0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
 	{ "ssl_c_der",              smp_fetch_ssl_x_der,          0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_c_chain_der",        smp_fetch_ssl_x_chain_der,    0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
 	{ "ssl_c_err",              smp_fetch_ssl_c_err,          0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
 	{ "ssl_c_i_dn",             smp_fetch_ssl_x_i_dn,         ARG3(0,STR,SINT,STR),val_dnfmt,    SMP_T_STR,  SMP_USE_L5CLI },
 	{ "ssl_c_key_alg",          smp_fetch_ssl_x_key_alg,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
